@@ -1,0 +1,253 @@
+// DOGM.AI Certificate Management Platform - Database Schema
+// Using Prisma with SQLite (dev) / Turso (prod)
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// USER MANAGEMENT
+// ==========================================
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String?
+  displayName  String?
+  avatarUrl    String?
+  role         String    @default("USER") // ADMIN, USER
+  isActive     Boolean   @default(true)
+
+  // Timestamps
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  certificates         Certificate[]
+  createdTemplates     CertificateTemplate[] @relation("CreatedBy")
+  signatures           Signature[]
+  certificateViews     CertificateView[]
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ==========================================
+// CERTIFICATE TEMPLATES
+// ==========================================
+
+model CertificateTemplate {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+
+  // Template Design
+  width       Int     @default(1056) // 11 inches at 96 DPI
+  height      Int     @default(816)  // 8.5 inches at 96 DPI (landscape)
+  orientation String  @default("landscape") // landscape, portrait
+
+  // Background
+  backgroundColor String? @default("#ffffff")
+  backgroundImage String? // URL to background image
+
+  // Layout Configuration (JSON)
+  // Contains positions for: title, recipientName, description, date, signatures, logos, borders
+  layoutConfig String // JSON configuration
+
+  // Styling (JSON)
+  // Contains: fonts, colors, borders, decorations
+  styleConfig String // JSON configuration
+
+  // Status
+  isPublished Boolean @default(false)
+  isDefault   Boolean @default(false)
+
+  // Creator
+  createdById String
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  createdBy    User          @relation("CreatedBy", fields: [createdById], references: [id])
+  certificates Certificate[]
+
+  @@index([slug])
+  @@index([isPublished])
+  @@map("certificate_templates")
+}
+
+// ==========================================
+// CERTIFICATES
+// ==========================================
+
+model Certificate {
+  id           String  @id @default(cuid())
+
+  // Unique public identifier for sharing
+  publicId     String  @unique @default(cuid())
+
+  // Certificate Details
+  title        String  // e.g., "Certificate of Completion"
+  recipientName String
+  recipientEmail String?
+  description  String? // e.g., "For successfully completing the Web Development Bootcamp"
+
+  // Issue Details
+  issuedAt     DateTime @default(now())
+  expiresAt    DateTime?
+
+  // Custom Fields (JSON)
+  // Can contain: cohortName, courseName, grade, hours, instructor, etc.
+  customFields String? // JSON
+
+  // Template Reference
+  templateId   String
+
+  // Owner (who received the certificate)
+  userId       String?
+
+  // Signatures attached to this certificate
+  signatureIds String? // JSON array of signature IDs
+
+  // Generated Assets
+  imageUrl     String? // Generated PNG/JPG URL
+  pdfUrl       String? // Generated PDF URL
+
+  // Status
+  status       String  @default("ACTIVE") // ACTIVE, REVOKED, EXPIRED
+  revokedAt    DateTime?
+  revokedReason String?
+
+  // Verification
+  verificationCode String @unique
+
+  // Timestamps
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  template     CertificateTemplate @relation(fields: [templateId], references: [id])
+  user         User?               @relation(fields: [userId], references: [id])
+  views        CertificateView[]
+  shares       CertificateShare[]
+
+  @@index([recipientEmail])
+  @@index([status])
+  @@index([verificationCode])
+  @@index([publicId])
+  @@map("certificates")
+}
+
+// ==========================================
+// SIGNATURES
+// ==========================================
+
+model Signature {
+  id          String  @id @default(cuid())
+
+  // Signer Information
+  name        String  // e.g., "John Smith"
+  title       String? // e.g., "Program Director"
+  organization String? // e.g., "DOGM.AI"
+
+  // Signature Image
+  imageUrl    String  // URL to signature image (PNG with transparency)
+
+  // Owner
+  userId      String
+
+  // Status
+  isActive    Boolean @default(true)
+
+  // Timestamps
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("signatures")
+}
+
+// ==========================================
+// CERTIFICATE VIEWS (Analytics)
+// ==========================================
+
+model CertificateView {
+  id            String   @id @default(cuid())
+  certificateId String
+
+  // Viewer Info
+  viewerId      String?  // If logged in
+  viewerIp      String?
+  userAgent     String?
+  referer       String?  // Where they came from
+
+  // Timestamps
+  viewedAt      DateTime @default(now())
+
+  // Relations
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+  viewer        User?       @relation(fields: [viewerId], references: [id])
+
+  @@index([certificateId])
+  @@index([viewedAt])
+  @@map("certificate_views")
+}
+
+// ==========================================
+// CERTIFICATE SHARES
+// ==========================================
+
+model CertificateShare {
+  id            String   @id @default(cuid())
+  certificateId String
+
+  // Share Details
+  platform      String   // LINKEDIN, TWITTER, FACEBOOK, EMAIL, LINK
+  shareUrl      String?  // Generated share URL
+
+  // Timestamps
+  sharedAt      DateTime @default(now())
+
+  // Relations
+  certificate   Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+
+  @@index([certificateId])
+  @@index([platform])
+  @@map("certificate_shares")
+}
+
+// ==========================================
+// SYSTEM SETTINGS
+// ==========================================
+
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String // JSON value
+  type  String @default("string") // string, number, boolean, json
+
+  // Metadata
+  description String?
+  category    String  @default("general")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@map("settings")
+}
